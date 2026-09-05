@@ -72,17 +72,26 @@ fi
 # ------------------------------------------------------------
 # 3. 非特権コンテナ用の subuid/subgid を保証 (Arch 特有)
 #    Ubuntu (snap) では自動設定されるが、Arch では手動が必要な場合がある。
+#    LXD は既定でホスト側に約10億個の ID 範囲を要求するため
+#    root:1000000:1000000000 が必要 (ArchWiki 推奨)。
+#    加えて EasyLXD の /opt/lxd-data 共有で使う raw.idmap "both 1000 1000"
+#    のため root:1000:1 の委譲も必要。
+#    不足・旧形式 (例: root:1000000:65536 のみ) の場合は置き換える。
 # ------------------------------------------------------------
 for f in /etc/subuid /etc/subgid; do
   if [ ! -f "$f" ]; then
     echo "[RUN]  $f を作成します..."
     touch "$f"
   fi
-  if grep -q '^root:' "$f"; then
+  if grep -q '^root:1000000:1000000000' "$f" && grep -q '^root:1000:1' "$f"; then
     echo "[SKIP] $f の root マッピングは設定済みです"
   else
-    echo "[RUN]  $f に root マッピングを追加します..."
-    echo 'root:1000000:65536' >> "$f"
+    echo "[RUN]  $f の root マッピングを設定します..."
+    grep -v '^root:' "$f" > "$f.tmp" || true
+    cat "$f.tmp" > "$f"
+    rm -f "$f.tmp"
+    echo 'root:1000000:1000000000' >> "$f"
+    echo 'root:1000:1' >> "$f"
   fi
 done
 
