@@ -806,15 +806,17 @@ const server = http.createServer(async (req, res) => {
 
   // --- KonomiTV (DTV) セットアップ ---
   // ほかのアプリと異なりコンテナ選択を行わない専用フロー。
-  // ホスト側スクリプト tuner-lxd.sh は対話式（y/n プロンプト・コンテナ名/authkey 入力）のため、
+  // ホスト側スクリプト (Ubuntu用 tuner-lxd.sh / CachyOS・Arch用 tuner-lxd-cachyos.sh)
+  // は対話式（y/n プロンプト・コンテナ名/authkey 入力）のため、
   // セクション見出しコメントを境界に awk で分割し、
   //   stage1 = ドライバ部分（セクション1まで）  …「px4_drvインストール」ボタン
   //   stage2 = 残り（セクション2以降・プロローグ再結合） …「コンテナ作成」ボタン
   // として実行する。対話への回答は標準入力ファイル経由で与える
   // （authkey もファイル経由のためログには流れない）。
+  // 両スクリプトのセクション見出しは同一のため、分割用 awk は共通で使える。
   const DTV_REPO_URL = 'https://github.com/hirogura/mirakc-edcb-konomitv.git';
   const DTV_MANAGE_URL = 'https://raw.githubusercontent.com/hirogura/mirakc-edcb-konomitv/main/install-dtv-manage.sh';
-  // 分割位置は tuner-lxd.sh のセクション見出しコメントで判定（index で前方一致比較）。
+  // 分割位置は tuner-lxd.sh / tuner-lxd-cachyos.sh のセクション見出しコメントで判定（index で前方一致比較）。
   const DTV_AWK_STAGE1 = 'index($0,"# 2. コンテナ名の入力")==1{exit}\n{print}';
   const DTV_AWK_STAGE2 = [
     'index($0,"# 1. チューナードライバのインストール")==1{skip=1}',
@@ -892,9 +894,11 @@ const server = http.createServer(async (req, res) => {
     } catch (e) { return json(res, 500, { error: e.message }); }
   }
 
-  // 「px4_drvインストール」ボタン: ~/dtv にリポジトリを取得し、tuner-lxd.sh の
-  // ドライバ部分のみホスト上で実行する。対話プロンプトには全て y で回答する
-  // （既存 .deb の再利用 / 新バージョンの取得、どちらの分岐でも最新側を選択）。
+  // 「px4_drvインストール」ボタン: ~/dtv にリポジトリを取得し、ホスト OS に合った
+  // スクリプト (CachyOS/Arch: tuner-lxd-cachyos.sh / Ubuntu/Debian: tuner-lxd.sh)
+  // のドライバ部分のみホスト上で実行する。対話プロンプトには全て y で回答する
+  // （既存ドライバの再利用 / 新バージョンの取得、どちらの分岐でも最新側を選択。
+  //  cachyos 版でカーネルヘッダが無い場合の導入確認にも y で回答する）。
   if (pathname === '/api/dtv/driver/stream' && req.method === 'POST') {
     const send = sseStart(res);
     try {
@@ -912,23 +916,30 @@ const server = http.createServer(async (req, res) => {
         `  git clone ${DTV_REPO_URL} "$DTV_DIR"`,
         'fi',
         'cd "$DTV_DIR"',
+        // ホスト OS に合ったドライバ導入スクリプトを選択する。
+        'if command -v pacman >/dev/null 2>&1; then',
+        '  DTV_SCRIPT="tuner-lxd-cachyos.sh"',
+        'elif command -v apt-get >/dev/null 2>&1; then',
+        '  DTV_SCRIPT="tuner-lxd.sh"',
+        'else',
+        '  echo "ERROR: pacman / apt-get のどちらも無いため px4_drv を導入できません。"',
+        '  exit 1',
+        'fi',
+        'echo "使用スクリプト: $DTV_SCRIPT"',
+        'test -f "$DTV_SCRIPT" || { echo "ERROR: $DTV_SCRIPT がリポジトリに見つかりません"; exit 1; }',
         'STAGE=$(mktemp /tmp/easylxd-dtv-stage1.XXXXXXXX.sh)',
         'RUNNER=$(mktemp /tmp/easylxd-dtv-runner.XXXXXXXX.sh)',
         'ANSWERS=$(mktemp /tmp/easylxd-dtv-answer.XXXXXXXX.txt)',
         'chmod 600 "$ANSWERS"',
         "trap 'rm -f \"$STAGE\" \"$RUNNER\" \"$ANSWERS\"' EXIT",
-        'if ! command -v apt-get >/dev/null 2>&1; then',
-        '  echo "ERROR: CachyOS/Arch ホストには apt が無いため px4_drv の .deb 導入は実行できません。"',
-        '  echo "対応方法は /opt/easy-lxd/KONOMITV-CACHYOS.md を参照してください。"',
-        '  exit 1',
-        'fi',
-        `awk '${DTV_AWK_STAGE1}' tuner-lxd.sh > "$STAGE"`,
-        'grep -q px4_drv "$STAGE" || { echo "ERROR: tuner-lxd.sh からドライバ部分を抽出できませんでした"; exit 1; }',
-        'if grep -q "コンテナ名を入力" "$STAGE"; then echo "ERROR: tuner-lxd.sh の分割に失敗しました"; exit 1; fi',
+        `awk '${DTV_AWK_STAGE1}' "$DTV_SCRIPT" > "$STAGE"`,
+        'grep -q px4_drv "$STAGE" || { echo "ERROR: $DTV_SCRIPT からドライバ部分を抽出できませんでした"; exit 1; }',
+        'if grep -q "コンテナ名を入力" "$STAGE"; then echo "ERROR: $DTV_SCRIPT の分割に失敗しました"; exit 1; fi',
         `echo ${DTV_RUNNER_B64} | base64 -d > "$RUNNER"`,
-        // 対話プロンプト（ドライバインストール可否・既存 .deb 再利用/新バージョン取得）には y で回答。
-        "printf 'y\\ny\\n' > \"$ANSWERS\"",
-        'echo "--- tuner-lxd.sh のドライバ部分を実行 ---"',
+        // 対話プロンプト（ドライバインストール可否・既存ドライバ再利用/新バージョン取得・
+        // cachyos 版のカーネルヘッダ導入確認）には y で回答。
+        "printf 'y\\ny\\ny\\n' > \"$ANSWERS\"",
+        'echo "--- $DTV_SCRIPT のドライバ部分を実行 ---"',
         'DTV_ANSWERS="$ANSWERS" DTV_STAGE="$STAGE" bash "$RUNNER" < /dev/null',
         'echo "px4_drv ドライバのインストールが完了しました"'
       ].join('\n');

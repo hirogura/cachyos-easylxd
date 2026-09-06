@@ -4,15 +4,21 @@ EasyLXD 本体のコンテナ操作 (作成・Tailscale・Docker・マウント�
 アプリインストール・DTV管理ダッシュボード) は、コンテナ内が Ubuntu のため
 CachyOS ホストでもそのまま動作します。
 
-## 動作しないもの: 「px4_drvインストール」ボタン
+## 「px4_drvインストール」ボタン (CachyOS 対応済み)
 
-`tuner-lxd.sh` のドライバ導入は以下を前提にしており、CachyOS/Arch ホストでは
-そのまま実行できません (UI から実行すると手順書への誘導エラーになります)。
+UI のボタンはホスト OS を自動判定し、CachyOS/Arch では
+`tuner-lxd-cachyos.sh` (Ubuntu では従来どおり `tuner-lxd.sh`) の
+ドライバ部分のみ実行します。
 
-- `px4-drv-dkms_*_all.deb` の取得 → `sudo apt install -y <deb>` で導入
+CachyOS 版の導入内容:
+
+- ソース tarball の取得 → `/usr/src/px4_drv-<version>` に展開
+- DKMS に登録・ビルド・インストール
+  (CachyOS の標準カーネルは clang ビルドのため `LLVM=1` を付けてビルド)
+- ファームウェア・udev rules は DKMS の POST_INSTALL で自動導入
 - `modprobe px4_drv` でロード、`/dev/isdb2056video*` の出現を確認
 
-## 代替手段 (ホスト側で手動導入)
+## 代替手段 (ボタンが失敗した場合の手動導入)
 
 ### 選択肢 A: AUR パッケージ (paru)
 

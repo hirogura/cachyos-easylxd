@@ -174,8 +174,10 @@ UID/GID 1000 で共有されます。
 ### KonomiTV (DTV) について
 
 コンテナ操作（作成・Tailscale・Docker・マウント等）はコンテナ内が Ubuntu のため
-そのまま動作しますが、ホスト側のチューナードライバ（px4_drv）導入は
-`.deb` + `apt` 前提のため CachyOS では実行できません。
+そのまま動作します。ホスト側のチューナードライバ（px4_drv）導入は、
+「px4_drvインストール」ボタンがホスト OS を自動判定し、
+CachyOS/Arch では `tuner-lxd-cachyos.sh`（ソース + DKMS 方式）、
+Ubuntu では従来どおり `tuner-lxd.sh`（.deb + apt 方式）のドライバ部分を実行します。
 詳細は [KONOMITV-CACHYOS.md](KONOMITV-CACHYOS.md) を参照してください。
 
 ## ライセンス

@@ -17,7 +17,7 @@
 #   - UI の「サーバアップデート」は lxd-setup.sh --skip-pool + 本体更新として
 #     CachyOS リポジトリを直接参照。「サーバ再起動」は easy-lxd の再起動
 #     (systemd 共通。サービス定義の After= のみ CachyOS 化)
-#   - KonomiTV の px4_drv 導入は Arch 非対応のためガード＋手順書
+#   - KonomiTV の px4_drv 導入は tuner-lxd-cachyos.sh (ソース + DKMS) に対応
 #     (KONOMITV-CACHYOS.md。コンテナ内操作は Ubuntu コンテナなので変更なし)
 #
 # 使い方:
@@ -218,6 +218,6 @@ echo "注意:"
 echo "  - LXD は pacman 版 (snap 不使用) です。"
 echo "  - UI の「サーバアップデート」は lxd-setup.sh --skip-pool + 本体更新として動作します。"
 echo "    「サーバ再起動」は easy-lxd サービスの再起動です。"
-echo "  - KonomiTV の px4_drv 導入は Arch 非対応です。"
-echo "    詳細は ${INSTALL_DIR}/KONOMITV-CACHYOS.md を参照してください。"
+echo "  - KonomiTV の px4_drv 導入は UI の「px4_drvインストール」ボタンで実行できます。"
+echo "    (tuner-lxd-cachyos.sh を使用。詳細は ${INSTALL_DIR}/KONOMITV-CACHYOS.md)"
 echo ""
