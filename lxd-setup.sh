@@ -14,6 +14,54 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 LXD_POOL_DIR="/opt/lxd-pool"
+LXD_DATA_DIR="/opt/lxd-data"
+
+# ------------------------------------------------------------
+# Btrfsサブボリュームの保証 (CachyOS / Btrfs環境用)
+#   /opt が Btrfs の場合、指定ディレクトリを独立サブボリューム化する。
+#   目的: snapper のシステムスナップショット (@) からコンテナ実体・
+#   共有データを除外し、肥大化と rollback 時の巻き込みを防ぐ。
+#   fstab 追記は不要 (親ボリューム内に自動で現れる)。
+#   - 既にサブボリューム → スキップ
+#   - 存在しない / 空ディレクトリ → サブボリュームとして作成
+#   - 空でない通常ディレクトリ → データ保護のためスキップ (警告のみ)
+#   - 非Btrfs / btrfs コマンド無し → 何もしない
+# ------------------------------------------------------------
+ensure_btrfs_subvolume() {
+  local dir="$1"
+  command -v btrfs &>/dev/null || return 0
+  local parent
+  parent="$(dirname "$dir")"
+  [ -d "$parent" ] || mkdir -p "$parent"
+  if [ "$(stat -f -c %T "$parent" 2>/dev/null)" != "btrfs" ]; then
+    return 0
+  fi
+  if [ -d "$dir" ] || [ -e "$dir" ]; then
+    if btrfs subvolume show "$dir" &>/dev/null; then
+      echo "[SKIP] $dir は既に Btrfs サブボリュームです"
+      return 0
+    fi
+    if [ -d "$dir" ] && [ -z "$(ls -A "$dir" 2>/dev/null)" ]; then
+      echo "[RUN]  空ディレクトリ $dir をサブボリュームに置き換えます..."
+      rmdir "$dir"
+    else
+      echo "[WARN] $dir は空でない通常ディレクトリのためサブボリューム化をスキップします"
+      echo "       移行する場合はコンテナ停止→退避→削除→subvolume create→復元してください"
+      return 0
+    fi
+  fi
+  echo "[RUN]  Btrfs サブボリューム $dir を作成します..."
+  btrfs subvolume create "$dir"
+}
+
+# Btrfs上なら btrfs ドライバー、そうでなければ dir ドライバーを使う。
+wanted_storage_driver() {
+  if command -v btrfs &>/dev/null && [ "$(stat -f -c %T "$(dirname "$LXD_POOL_DIR")" 2>/dev/null)" = "btrfs" ]; then
+    echo "btrfs"
+  else
+    echo "dir"
+  fi
+}
 
 # ------------------------------------------------------------
 # オプション解析
@@ -149,24 +197,51 @@ fi
 
 # ------------------------------------------------------------
 # 7. ストレージプールを /opt/lxd-pool に変更
+#    Btrfs上ならサブボリューム化 + btrfs ドライバー、非Btrfsなら
+#    通常ディレクトリ + dir ドライバー。
 #    --skip-pool 指定時 (サーバアップデート時) はスキップ。
 # ------------------------------------------------------------
+# /opt/lxd-data もプール処理の成否に関わらずサブボリューム化だけは保証する
+# (snapper 除外のため。--skip-pool 時も実行される)。
+ensure_btrfs_subvolume "$LXD_DATA_DIR" || true
+if [ -d "$LXD_DATA_DIR" ]; then
+  chown -R 1000:1000 "$LXD_DATA_DIR" 2>/dev/null || true
+  chmod -R 775 "$LXD_DATA_DIR" 2>/dev/null || true
+fi
+
 if [ "$SKIP_POOL" = true ]; then
   echo "[SKIP] サーバアップデートのためストレージプールの変更をスキップします"
 else
+  ensure_btrfs_subvolume "$LXD_POOL_DIR" || true
   mkdir -p "$LXD_POOL_DIR"
 
+  WANT_DRIVER="$(wanted_storage_driver)"
+  echo "[INFO] ストレージドライバー: $WANT_DRIVER (source=$LXD_POOL_DIR)"
+
   CURRENT_SOURCE=$(lxc storage get default source 2>/dev/null || echo "")
-  if [ "$CURRENT_SOURCE" = "$LXD_POOL_DIR" ]; then
-    echo "[SKIP] Storage pool は既に $LXD_POOL_DIR を向いています"
+  CURRENT_DRIVER=$(lxc storage show default 2>/dev/null | awk -F': *' '$1=="driver" {print $2}' || echo "")
+  if [ "$CURRENT_SOURCE" = "$LXD_POOL_DIR" ] && [ "$CURRENT_DRIVER" = "$WANT_DRIVER" ]; then
+    echo "[SKIP] Storage pool は既に $LXD_POOL_DIR ($WANT_DRIVER) を向いています"
   else
-    echo "[RUN]  Storage pool を $LXD_POOL_DIR に変更します..."
+    echo "[RUN]  Storage pool を $LXD_POOL_DIR ($WANT_DRIVER) に変更します..."
     if lxc storage show default &>/dev/null; then
+      # インスタンスやカスタムボリュームが残っているとプール削除できない。
+      # 中途半端な削除を避けるため事前に検出して中断する。
+      if lxc list --format csv -c n 2>/dev/null | grep -q .; then
+        echo "ERROR: インスタンスが残っているためストレージプールを変更できません。"
+        echo "       先に全インスタンスを削除 (lxc delete --force <name>) してから再実行してください。"
+        exit 1
+      fi
+      if lxc storage volume list default --format csv 2>/dev/null | grep -q .; then
+        echo "ERROR: カスタムボリュームが残っているためストレージプールを変更できません。"
+        echo "       先にボリュームを削除してから再実行してください。"
+        exit 1
+      fi
       # default プールを参照しているプロファイルデバイスを先に外す
       lxc profile device remove default root 2>/dev/null || true
       lxc storage delete default
     fi
-    lxc storage create default dir source="$LXD_POOL_DIR"
+    lxc storage create default "$WANT_DRIVER" source="$LXD_POOL_DIR"
   fi
 
   # ------------------------------------------------------------

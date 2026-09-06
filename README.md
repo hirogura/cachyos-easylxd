@@ -50,7 +50,8 @@ sudo /tmp/lxd-setup.sh
 - `lxd.socket` / `lxd.service` の有効化・起動
 - `lxd init --minimal` による初期化
 - `/etc/subuid`・`/etc/subgid` の root マッピング追加
-- ストレージプールを `/opt/lxd-pool` に変更
+- `/opt/lxd-pool`・`/opt/lxd-data` をBtrfsサブボリューム化 (Btrfs環境のみ、snapper除外用)
+- ストレージプールを `/opt/lxd-pool` に変更 (Btrfs上は `btrfs` ドライバー、それ以外は `dir`)
 - HTTPS API の有効化（`:8443`）
 - 実行ユーザーを `lxd` グループに追加
 

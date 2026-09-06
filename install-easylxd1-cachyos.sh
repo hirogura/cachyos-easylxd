@@ -61,7 +61,7 @@ echo "依存パッケージを確認・インストール中 (pacman)..."
 pacman -Sy --needed --noconfirm \
   curl git nodejs npm base-devel python3 \
   pciutils usbutils jq procps-ng \
-  tailscale lxd dkms \
+  tailscale lxd dkms btrfs-progs \
   || { echo "ERROR: pacman での依存パッケージ導入に失敗しました"; exit 1; }
 
 # カーネルヘッダ (px4_drv の DKMS ビルド時に必要。無くても本体動作には支障なし)
@@ -97,11 +97,39 @@ fi
 # --- ディレクトリ ---
 mkdir -p "$INSTALL_DIR"
 
-# --- /opt/lxd-data ディレクトリ作成と権限設定 ---
-if [ ! -d "/opt/lxd-data" ]; then
-  echo "/opt/lxd-data ディレクトリを作成します..."
-  mkdir -p /opt/lxd-data
-fi
+# --- /opt/lxd-pool・/opt/lxd-data をBtrfsサブボリュームとして事前作成 ---
+# CachyOS既定では /opt は @ サブボリューム内のため、独立サブボリューム化して
+# snapperのシステムスナップショットからコンテナ実体・共有データを除外する。
+# (fstab追記不要。非Btrfs環境では通常ディレクトリになる。lxd-setup.sh側でも
+#  同じ保証を行うため二重化しても安全。空でない既存ディレクトリは保護のため維持。)
+ensure_btrfs_subvolume() {
+  local dir="$1"
+  command -v btrfs &>/dev/null || { mkdir -p "$dir"; return 0; }
+  local parent
+  parent="$(dirname "$dir")"
+  [ -d "$parent" ] || mkdir -p "$parent"
+  if [ "$(stat -f -c %T "$parent" 2>/dev/null)" != "btrfs" ]; then
+    mkdir -p "$dir"
+    return 0
+  fi
+  if [ -d "$dir" ] || [ -e "$dir" ]; then
+    if btrfs subvolume show "$dir" &>/dev/null; then
+      echo "[SKIP] $dir は既に Btrfs サブボリュームです"
+      return 0
+    fi
+    if [ -d "$dir" ] && [ -z "$(ls -A "$dir" 2>/dev/null)" ]; then
+      echo "空ディレクトリ $dir をサブボリュームに置き換えます..."
+      rmdir "$dir"
+    else
+      echo "[WARN] $dir は空でないためサブボリューム化をスキップします"
+      return 0
+    fi
+  fi
+  echo "Btrfs サブボリューム $dir を作成します..."
+  btrfs subvolume create "$dir"
+}
+ensure_btrfs_subvolume "/opt/lxd-pool" || true
+ensure_btrfs_subvolume "/opt/lxd-data" || true
 
 # raw.idmap "both 1000 1000" はコンテナ内 UID/GID 1000 をシフトせずホストにそのまま通す設定。
 # ユーザー名の存在有無に依存せず、数値UID/GIDで直接 chown することで確実に権限を合わせる。
