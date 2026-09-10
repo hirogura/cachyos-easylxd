@@ -4,6 +4,8 @@ LXD インスタンスをブラウザから管理するための Web UI です�
 [元プロジェクト](https://github.com/hirogura/easylxd) (Ubuntu + snap 前提) を
 CachyOS / Arch Linux 向けに直接改変したものです。
 
+2026/9/10 - Ubuntu版（ https://github.com/hirogura/easylxd ）と一本化したので、今後はそちらで。 しばらくの間、こちらも残しておきます。
+
 - インスタンスの一覧 / 起動・停止・再起動・削除
 - インスタンス作成（Ubuntu / カスタムイメージ対応）
   - apt アップデート、Tailscale、Docker、/opt/lxd-data マウント をワンクリックで設定
